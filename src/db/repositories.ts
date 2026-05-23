@@ -1,8 +1,9 @@
 import { and, desc, eq, not } from "drizzle-orm";
 import { getDb } from "./client";
-import { advisories, installations, issues, pullRequests, repositories, webhookEvents } from "./schema";
+import { advisories, bounties, installations, issues, pullRequests, repositories, webhookEvents } from "./schema";
 import type {
   Advisory,
+  BountyRecord,
   GitHubIssuePayload,
   GitHubPullRequestPayload,
   GitHubRepositoryPayload,
@@ -204,6 +205,36 @@ export async function listOpenIssues(env: Env, fullName: string): Promise<IssueR
   return rows.map(toIssueRecordFromRow);
 }
 
+export async function listIssues(env: Env, fullName: string): Promise<IssueRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(issues).where(eq(issues.repoFullName, fullName)).limit(500);
+  return rows.map(toIssueRecordFromRow);
+}
+
+export async function listAllIssues(env: Env): Promise<IssueRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(issues).limit(2000);
+  return rows.map(toIssueRecordFromRow);
+}
+
+export async function listOpenPullRequests(env: Env, fullName: string): Promise<PullRequestRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(pullRequests).where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open"))).limit(500);
+  return rows.map(toPullRequestRecordFromRow);
+}
+
+export async function listPullRequests(env: Env, fullName: string): Promise<PullRequestRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(pullRequests).where(eq(pullRequests.repoFullName, fullName)).limit(500);
+  return rows.map(toPullRequestRecordFromRow);
+}
+
+export async function listAllPullRequests(env: Env): Promise<PullRequestRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(pullRequests).limit(2000);
+  return rows.map(toPullRequestRecordFromRow);
+}
+
 export async function listOtherOpenPullRequests(env: Env, fullName: string, number: number): Promise<PullRequestRecord[]> {
   const db = getDb(env.DB);
   const rows = await db
@@ -212,6 +243,58 @@ export async function listOtherOpenPullRequests(env: Env, fullName: string, numb
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open"), not(eq(pullRequests.number, number))))
     .limit(100);
   return rows.map(toPullRequestRecordFromRow);
+}
+
+export async function listContributorPullRequests(env: Env, login: string): Promise<PullRequestRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(pullRequests).where(eq(pullRequests.authorLogin, login)).limit(1000);
+  return rows.map(toPullRequestRecordFromRow);
+}
+
+export async function listContributorIssues(env: Env, login: string): Promise<IssueRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(issues).where(eq(issues.authorLogin, login)).limit(1000);
+  return rows.map(toIssueRecordFromRow);
+}
+
+export async function listBounties(env: Env): Promise<BountyRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(bounties).orderBy(desc(bounties.updatedAt)).limit(1000);
+  return rows.map(toBountyRecord);
+}
+
+export async function getBounty(env: Env, id: string): Promise<BountyRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(bounties).where(eq(bounties.id, id)).limit(1);
+  return row ? toBountyRecord(row) : null;
+}
+
+export async function upsertBounty(env: Env, bounty: BountyRecord): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .insert(bounties)
+    .values({
+      id: bounty.id,
+      repoFullName: bounty.repoFullName,
+      issueNumber: bounty.issueNumber,
+      status: bounty.status,
+      amountText: bounty.amountText,
+      sourceUrl: bounty.sourceUrl,
+      payloadJson: jsonString(bounty.payload),
+      updatedAt: nowIso(),
+    })
+    .onConflictDoUpdate({
+      target: bounties.id,
+      set: {
+        repoFullName: bounty.repoFullName,
+        issueNumber: bounty.issueNumber,
+        status: bounty.status,
+        amountText: bounty.amountText,
+        sourceUrl: bounty.sourceUrl,
+        payloadJson: jsonString(bounty.payload),
+        updatedAt: nowIso(),
+      },
+    });
 }
 
 export async function persistAdvisory(env: Env, advisory: Advisory): Promise<void> {
@@ -315,12 +398,15 @@ function toPullRequestRecord(repoFullName: string, pr: GitHubPullRequestPayload)
     headRef: pr.head?.ref,
     baseRef: pr.base?.ref,
     htmlUrl: pr.html_url,
+    mergedAt: pr.merged_at,
+    body: pr.body,
     labels: (pr.labels ?? []).flatMap((label) => (label.name ? [label.name] : [])),
     linkedIssues: extractLinkedIssueNumbers(pr.body ?? ""),
   };
 }
 
 function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): PullRequestRecord {
+  const payload = parseJson<{ body?: string | null; created_at?: string | null; updated_at?: string | null }>(row.payloadJson, {});
   return {
     repoFullName: row.repoFullName,
     number: row.number,
@@ -332,6 +418,10 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     headRef: row.headRef,
     baseRef: row.baseRef,
     htmlUrl: row.htmlUrl,
+    mergedAt: row.mergedAt,
+    body: payload.body,
+    createdAt: payload.created_at,
+    updatedAt: payload.updated_at ?? row.updatedAt,
     labels: parseJson<string[]>(row.labelsJson, []),
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
   };
@@ -346,12 +436,14 @@ function toIssueRecord(repoFullName: string, issue: GitHubIssuePayload): IssueRe
     authorLogin: issue.user?.login,
     authorAssociation: issue.author_association,
     htmlUrl: issue.html_url,
+    body: issue.body,
     labels: (issue.labels ?? []).flatMap((label) => (label.name ? [label.name] : [])),
     linkedPrs: extractLinkedPrNumbers(issue.body ?? ""),
   };
 }
 
 function toIssueRecordFromRow(row: typeof issues.$inferSelect): IssueRecord {
+  const payload = parseJson<{ body?: string | null; created_at?: string | null; updated_at?: string | null }>(row.payloadJson, {});
   return {
     repoFullName: row.repoFullName,
     number: row.number,
@@ -360,8 +452,25 @@ function toIssueRecordFromRow(row: typeof issues.$inferSelect): IssueRecord {
     authorLogin: row.authorLogin,
     authorAssociation: row.authorAssociation,
     htmlUrl: row.htmlUrl,
+    body: payload.body,
+    createdAt: payload.created_at,
+    updatedAt: payload.updated_at ?? row.updatedAt,
     labels: parseJson<string[]>(row.labelsJson, []),
     linkedPrs: parseJson<number[]>(row.linkedPrsJson, []),
+  };
+}
+
+function toBountyRecord(row: typeof bounties.$inferSelect): BountyRecord {
+  return {
+    id: row.id,
+    repoFullName: row.repoFullName,
+    issueNumber: row.issueNumber,
+    status: row.status,
+    amountText: row.amountText,
+    sourceUrl: row.sourceUrl,
+    payload: parseJson<Record<string, never>>(row.payloadJson, {}),
+    discoveredAt: row.discoveredAt,
+    updatedAt: row.updatedAt,
   };
 }
 

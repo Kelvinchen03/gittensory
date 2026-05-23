@@ -163,6 +163,10 @@ export type PullRequestRecord = {
   headRef?: string | null | undefined;
   baseRef?: string | null | undefined;
   htmlUrl?: string | null | undefined;
+  mergedAt?: string | null | undefined;
+  body?: string | null | undefined;
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
   labels: string[];
   linkedIssues: number[];
 };
@@ -175,6 +179,21 @@ export type IssueRecord = {
   authorLogin?: string | null | undefined;
   authorAssociation?: string | null | undefined;
   htmlUrl?: string | null | undefined;
+  body?: string | null | undefined;
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
   labels: string[];
   linkedPrs: number[];
+};
+
+export type BountyRecord = {
+  id: string;
+  repoFullName: string;
+  issueNumber: number;
+  status: string;
+  amountText?: string | null | undefined;
+  sourceUrl?: string | null | undefined;
+  payload: Record<string, JsonValue>;
+  discoveredAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
 };
