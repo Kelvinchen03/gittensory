@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## mcp-v0.1.4 - 2026-05-26
 
 
 ### CI
