@@ -30,6 +30,7 @@ commit_preprocessors = [
 
 commit_parsers = [
   { message = "^feat", group = "Features" },
+  { message = "^fix\\(changelog\\)", skip = true },
   { message = "^fix", group = "Fixes" },
   { message = "^test", group = "Tests" },
   { message = "^docs\\(changelog\\)", skip = true },

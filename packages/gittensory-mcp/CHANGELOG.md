@@ -13,8 +13,6 @@
 
 - Create GitHub releases for MCP tag publishes
 
-- Label mcp release workflow changes
-
 
 ## mcp-v0.1.4 - 2026-05-26
 
